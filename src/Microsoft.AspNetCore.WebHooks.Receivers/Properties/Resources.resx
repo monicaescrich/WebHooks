@@ -126,6 +126,9 @@
   <data name="General_ArgumentCannotBeNullOrEmpty" xml:space="preserve">
     <value>Value cannot be null or empty.</value>
   </data>
+  <data name="General_InvalidBodyType" xml:space="preserve">
+    <value>The '{0}' value is not valid for this property. Must have a single {1} flag set or be '{2}'.</value>
+  </data>
   <data name="General_InvalidEnumValue" xml:space="preserve">
     <value>Enum type {0} has no defined '{1}' value.</value>
   </data>
@@ -141,8 +144,11 @@
   <data name="MetadataProvider_DuplicateMetadata" xml:space="preserve">
     <value>Duplicate '{0}' registrations found.</value>
   </data>
-  <data name="MetadataProvider_MissingAttributeMetadata" xml:space="preserve">
-    <value>'{0}' has a null {1} property but does not implement '{2}'.</value>
+  <data name="MetadataProvider_InvalidAttributeValue" xml:space="preserve">
+    <value>Invalid WebHook attribute found. Attributes implementing '{0}' must have valid {1} values.</value>
+  </data>
+  <data name="MetadataProvider_InvalidMetadataServices" xml:space="preserve">
+    <value>Invalid metadata services found. Metadata services implementing '{0}' must have valid {1} values.</value>
   </data>
   <data name="MetadataProvider_MissingMetadata" xml:space="preserve">
     <value>No '{0}' implementation found for the '{1}' WebHook receiver.</value>
@@ -154,13 +160,10 @@
     <value>Invalid metadata services found for the '{0}' WebHook receiver. Receivers with attributes implementing '{1}' must also provide a '{2}' service.</value>
   </data>
   <data name="MetadataProvider_WrongInterface" xml:space="preserve">
-    <value>Invalid metadata services found. Metadata services implementing '{0}' must implement '{1}'.</value>
+    <value>Invalid metadata services found. Metadata services must not implement '{0}' and must instead implement all of '{1}'.</value>
   </data>
   <data name="RequestReader_ModelBindingFailed" xml:space="preserve">
     <value>The MVC model binding system failed. Model state is valid but model was not set.</value>
-  </data>
-  <data name="RequestReader_ModelBindingUnexpectedlyInvalid" xml:space="preserve">
-    <value>The MVC model binding system unexpectedly failed. Binding the {0} type should never add {1} errors.</value>
   </data>
   <data name="RoutingProvider_MixedRouteWithWebHookAttribute" xml:space="preserve">
     <value>{0} and {1} were applied to the same action. {0} must not be combined with another attribute that provides a route template.</value>
@@ -175,13 +178,16 @@
     <value>Could not find a valid configuration for the '{0}' WebHook receiver. Please configure secret keys for this receiver.</value>
   </data>
   <data name="VerifyBody_NoFormData" xml:space="preserve">
-    <value>The WebHook request must contain an entity body formatted as HTML form URL-encoded data.</value>
+    <value>The '{0}' content type is not supported by the '{1}' WebHook receiver. The WebHook request must contain an entity body formatted as HTML form URL-encoded data.</value>
   </data>
   <data name="VerifyBody_NoJson" xml:space="preserve">
-    <value>The WebHook request must contain an entity body formatted as JSON.</value>
+    <value>The '{0}' content type is not supported by the '{1}' WebHook receiver. The WebHook request must contain an entity body formatted as JSON.</value>
   </data>
   <data name="VerifyBody_NoXml" xml:space="preserve">
-    <value>The WebHook request must contain an entity body formatted as XML.</value>
+    <value>The '{0}' content type is not supported by the '{1}' WebHook receiver. The WebHook request must contain an entity body formatted as XML.</value>
+  </data>
+  <data name="VerifyBody_UnsupportedContentType" xml:space="preserve">
+    <value>The '{0}' content type is not supported by the '{1}' WebHook receiver. The WebHook request must contain an entity body formatted to match '{2}'.</value>
   </data>
   <data name="VerifyCode_BadCode" xml:space="preserve">
     <value>The '{0}' query parameter provided in the HTTP request did not match the expected value.</value>

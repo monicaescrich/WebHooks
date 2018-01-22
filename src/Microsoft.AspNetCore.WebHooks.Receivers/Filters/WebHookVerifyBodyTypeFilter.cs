@@ -1,11 +1,14 @@
-﻿// Copyright (c) .NET Foundation. All rights reserved.
+// Copyright (c) .NET Foundation. All rights reserved.
 // Licensed under the Apache License, Version 2.0. See License.txt in the project root for license information.
 
 using System;
+using System.Collections.Generic;
 using System.Globalization;
+using System.Linq;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.Filters;
+using Microsoft.AspNetCore.Routing;
 using Microsoft.AspNetCore.WebHooks.Metadata;
 using Microsoft.AspNetCore.WebHooks.Properties;
 using Microsoft.Extensions.Logging;
@@ -14,8 +17,9 @@ using Microsoft.Net.Http.Headers;
 namespace Microsoft.AspNetCore.WebHooks.Filters
 {
     /// <summary>
-    /// An <see cref="IResourceFilter"/> to allow only WebHook requests with a <c>Content-Type</c> matching
-    /// <see cref="IWebHookBodyTypeMetadata.BodyType"/>.
+    /// An <see cref="IResourceFilter"/> to allow only WebHook requests with a <c>Content-Type</c> matching the
+    /// action's  <see cref="IWebHookBodyTypeMetadata.BodyType"/> and / or the receiver's
+    /// <see cref="IWebHookBodyTypeMetadataService.BodyType"/>.
     /// </summary>
     /// <remarks>
     /// Done as an <see cref="IResourceFilter"/> implementation and not an
@@ -33,13 +37,17 @@ namespace Microsoft.AspNetCore.WebHooks.Filters
         private static readonly MediaTypeHeaderValue TextJsonMediaType = new MediaTypeHeaderValue("text/json");
         private static readonly MediaTypeHeaderValue TextXmlMediaType = new MediaTypeHeaderValue("text/xml");
 
+        private readonly IReadOnlyList<IWebHookBodyTypeMetadataService> _allBodyTypeMetadata;
         private readonly IWebHookBodyTypeMetadata _bodyTypeMetadata;
         private readonly ILogger _logger;
 
         /// <summary>
-        /// Instantiates a new <see cref="WebHookVerifyMethodFilter"/> instance.
+        /// Instantiates a new <see cref="WebHookVerifyMethodFilter"/> instance to verify the given action- or
+        /// receiver-specific <paramref name="bodyTypeMetadata"/>.
         /// </summary>
-        /// <param name="bodyTypeMetadata">The <see cref="IWebHookBodyTypeMetadata"/>.</param>
+        /// <param name="bodyTypeMetadata">
+        /// The <see cref="IWebHookBodyTypeMetadata"/> to confirm matches the request's <c>Content-Type</c>.
+        /// </param>
         /// <param name="loggerFactory">The <see cref="ILoggerFactory"/>.</param>
         public WebHookVerifyBodyTypeFilter(IWebHookBodyTypeMetadata bodyTypeMetadata, ILoggerFactory loggerFactory)
         {
@@ -57,6 +65,37 @@ namespace Microsoft.AspNetCore.WebHooks.Filters
         }
 
         /// <summary>
+        /// Instantiates a new <see cref="WebHookVerifyMethodFilter"/> instance to verify the given action-specific
+        /// <paramref name="actionBodyTypeMetadata"/>. Also confirms <paramref name="actionBodyTypeMetadata"/> is
+        /// <see cref="WebHookBodyType.All"/> or a subset of the <see cref="IWebHookBodyTypeMetadataService"/> found in
+        /// <paramref name="allBodyTypeMetadata"/> for the receiver handling the request.
+        /// </summary>
+        /// <param name="actionBodyTypeMetadata">
+        /// The <see cref="IWebHookBodyTypeMetadata"/> to confirm matches the request's <c>Content-Type</c>.
+        /// </param>
+        /// <param name="allBodyTypeMetadata">
+        /// The collection of <see cref="IWebHookBodyTypeMetadataService"/> services. Searched for applicable metadata
+        /// per-request.
+        /// </param>
+        /// <param name="loggerFactory">The <see cref="ILoggerFactory"/>.</param>
+        /// <remarks>
+        /// This overload is intended for use with <see cref="GeneralWebHookAttribute"/>.
+        /// </remarks>
+        public WebHookVerifyBodyTypeFilter(
+            IReadOnlyList<IWebHookBodyTypeMetadataService> allBodyTypeMetadata,
+            IWebHookBodyTypeMetadata actionBodyTypeMetadata,
+            ILoggerFactory loggerFactory)
+            : this (actionBodyTypeMetadata, loggerFactory)
+        {
+            if (allBodyTypeMetadata == null)
+            {
+                throw new ArgumentNullException(nameof(allBodyTypeMetadata));
+            }
+
+            _allBodyTypeMetadata = allBodyTypeMetadata;
+        }
+
+        /// <summary>
         /// Gets the <see cref="IOrderedFilter.Order"/> used in all <see cref="WebHookVerifyBodyTypeFilter"/>
         /// instances. The recommended filter sequence is
         /// <list type="number">
@@ -65,8 +104,8 @@ namespace Microsoft.AspNetCore.WebHooks.Filters
         /// <see cref="WebHookSecurityFilter"/> subclass.
         /// </item>
         /// <item>
-        /// Confirm required headers, <see cref="AspNetCore.Routing.RouteValueDictionary"/> entries and query
-        /// parameters are provided (in <see cref="WebHookVerifyRequiredValueFilter"/>).
+        /// Confirm required headers, <see cref="RouteValueDictionary"/> entries and query parameters are provided
+        /// (in <see cref="WebHookVerifyRequiredValueFilter"/>).
         /// </item>
         /// <item>
         /// Short-circuit GET or HEAD requests, if receiver supports either (in
@@ -97,37 +136,142 @@ namespace Microsoft.AspNetCore.WebHooks.Filters
                 throw new ArgumentNullException(nameof(context));
             }
 
+            var routeData = context.RouteData;
+            if (!routeData.TryGetWebHookReceiverName(out var receiverName))
+            {
+                return;
+            }
+
+            var bodyTypeMetadata = _bodyTypeMetadata;
+            if (_allBodyTypeMetadata != null)
+            {
+                var receiverBodyTypeMetadata = _allBodyTypeMetadata
+                    .FirstOrDefault(metadata => metadata.IsApplicable(receiverName));
+                if (receiverBodyTypeMetadata == null)
+                {
+                    // Should not be possible because WebHookMetadataProvider requires an
+                    // IWebHookBodyTypeMetadataService implementation for all receivers.
+                    _logger.LogCritical(
+                        2,
+                        "No '{MetadataType}' implementation found for the '{ReceiverName}' WebHook receiver. Each " +
+                        "receiver must register a '{ServiceMetadataType}' service.",
+                        typeof(IWebHookBodyTypeMetadataService),
+                        receiverName,
+                        typeof(IWebHookBodyTypeMetadataService));
+
+                    // Reuse the message for the Exception the WebHookMetadataProvider should have thrown.
+                    var message = string.Format(
+                        CultureInfo.CurrentCulture,
+                        Resources.MetadataProvider_MissingMetadata,
+                        typeof(IWebHookBodyTypeMetadataService),
+                        receiverName);
+                    throw new InvalidOperationException(message);
+                }
+
+                if (bodyTypeMetadata.BodyType == WebHookBodyType.All)
+                {
+                    // Use receiver-specific requirement since the action is flexible.
+                    bodyTypeMetadata = receiverBodyTypeMetadata;
+                }
+                else
+                {
+                    // Apply subset check that WebHookMetadataProvider could not: Attribute must require the same body
+                    // type as receiver's metadata service or a subset. That is, `bodyTypeMetadata.BodyType` flags must
+                    // not include any beyond those set in `receiverBodyTypeMetadata.BodyType`.
+                    if ((~receiverBodyTypeMetadata.BodyType & bodyTypeMetadata.BodyType) != 0)
+                    {
+                        _logger.LogCritical(
+                            0,
+                            "Invalid '{MetadataType}.{PropertyName}' value '{PropertyValue}' in {AttributeType}. " +
+                            "This value must be equal to or a subset of the " +
+                            "'{ServiceMetadataType}.{ServicePropertyName}' value '{ServicePropertyValue}' for the " +
+                            "'{ReceiverName}' WebHook receiver.",
+                            typeof(IWebHookBodyTypeMetadata),
+                            nameof(IWebHookBodyTypeMetadata.BodyType),
+                            bodyTypeMetadata.BodyType,
+                            bodyTypeMetadata.GetType(),
+                            typeof(IWebHookBodyTypeMetadataService),
+                            nameof(IWebHookBodyTypeMetadataService.BodyType),
+                            receiverBodyTypeMetadata.BodyType,
+                            receiverName);
+
+                        var message = string.Format(
+                            CultureInfo.CurrentCulture,
+                            Resources.MetadataProvider_InvalidAttributeValue,
+                            typeof(IWebHookBodyTypeMetadata),
+                            nameof(IWebHookBodyTypeMetadata.BodyType));
+                        throw new InvalidOperationException(message);
+                    }
+                }
+            }
+
             var request = context.HttpContext.Request;
-            switch (_bodyTypeMetadata.BodyType)
+            switch (bodyTypeMetadata.BodyType)
             {
                 case WebHookBodyType.Form:
                     if (!request.HasFormContentType)
                     {
-                        context.Result = CreateUnsupportedMediaTypeResult(Resources.VerifyBody_NoFormData);
+                        var message = string.Format(
+                            CultureInfo.CurrentCulture,
+                            Resources.VerifyBody_NoFormData,
+                            request.GetTypedHeaders().ContentType,
+                            receiverName);
+                        context.Result = CreateUnsupportedMediaTypeResult(message);
                     }
                     break;
 
                 case WebHookBodyType.Json:
                     if (!IsJson(request))
                     {
-                        context.Result = CreateUnsupportedMediaTypeResult(Resources.VerifyBody_NoJson);
+                        var message = string.Format(
+                            CultureInfo.CurrentCulture,
+                            Resources.VerifyBody_NoJson,
+                            request.GetTypedHeaders().ContentType,
+                            receiverName);
+                        context.Result = CreateUnsupportedMediaTypeResult(message);
                     }
                     break;
 
                 case WebHookBodyType.Xml:
                     if (!IsXml(request))
                     {
-                        context.Result = CreateUnsupportedMediaTypeResult(Resources.VerifyBody_NoXml);
+                        var message = string.Format(
+                            CultureInfo.CurrentCulture,
+                            Resources.VerifyBody_NoXml,
+                            request.GetTypedHeaders().ContentType,
+                            receiverName);
+                        context.Result = CreateUnsupportedMediaTypeResult(message);
                     }
                     break;
 
                 default:
-                    var message = string.Format(
-                        CultureInfo.CurrentCulture,
-                        Resources.General_InvalidEnumValue,
-                        nameof(WebHookBodyType),
-                        _bodyTypeMetadata.BodyType);
-                    throw new InvalidOperationException(message);
+                    // Multiple flags set is a special case. Occurs when receiver supports multiple body types and
+                    // action has no more specific requirements i.e. its BodyType is `All`.
+                    if ((WebHookBodyType.Form & bodyTypeMetadata.BodyType) != 0 && request.HasFormContentType)
+                    {
+                        return;
+                    }
+
+                    if ((WebHookBodyType.Json & bodyTypeMetadata.BodyType) != 0 && IsJson(request))
+                    {
+                        return;
+                    }
+
+                    if ((WebHookBodyType.Xml & bodyTypeMetadata.BodyType) != 0 && IsXml(request))
+                    {
+                        return;
+                    }
+
+                    {
+                        var message = string.Format(
+                            CultureInfo.CurrentCulture,
+                            Resources.VerifyBody_UnsupportedContentType,
+                            request.GetTypedHeaders().ContentType,
+                            receiverName,
+                            bodyTypeMetadata.BodyType);
+                        context.Result = CreateUnsupportedMediaTypeResult(message);
+                    }
+                    break;
             }
         }
 

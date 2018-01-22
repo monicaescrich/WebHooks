@@ -1,4 +1,4 @@
-﻿// Copyright (c) .NET Foundation. All rights reserved.
+// Copyright (c) .NET Foundation. All rights reserved.
 // Licensed under the Apache License, Version 2.0. See License.txt in the project root for license information.
 
 using System;
@@ -16,13 +16,35 @@ using Newtonsoft.Json.Linq;
 namespace Microsoft.AspNetCore.WebHooks.ApplicationModels
 {
     /// <summary>
-    /// An <see cref="IApplicationModelProvider"/> implementation that adds <see cref="IBindingSourceMetadata"/> and
-    /// <see cref="IModelNameProvider"/> information to <see cref="ParameterModel"/>s of WebHook actions.
+    /// An <see cref="IApplicationModelProvider"/> implementation that adds model binding information
+    /// (<see cref="BindingInfo"/> settings similar to <see cref="IBindingSourceMetadata"/> and
+    /// <see cref="IModelNameProvider"/>) to <see cref="ParameterModel"/>s of WebHook actions.
     /// </summary>
     public class WebHookModelBindingProvider : IApplicationModelProvider
     {
+        /// <summary>
+        /// Gets the <see cref="IApplicationModelProvider.Order"/> value used in all
+        /// <see cref="WebHookModelBindingProvider"/> instances. The recommended
+        /// <see cref="IApplicationModelProvider"/> order is
+        /// <list type="number">
+        /// <item>
+        /// Validate metadata services and <see cref="WebHookAttribute"/> metadata implementations and add information
+        /// used in later application model providers (in <see cref="WebHookMetadataProvider"/>).
+        /// </item>
+        /// <item>
+        /// Add routing information (template, constraints and filters) to <see cref="ActionModel"/>s (in
+        /// <see cref="WebHookRoutingProvider"/>).
+        /// </item>
+        /// <item>
+        /// Add model binding information (<see cref="BindingInfo"/> settings) to <see cref="ParameterModel"/>s (in
+        /// this filter).
+        /// </item>
+        /// </list>
+        /// </summary>
+        public static int Order => WebHookRoutingProvider.Order + 10;
+
         /// <inheritdoc />
-        public int Order => WebHookMetadataProvider.Order + 20;
+        int IApplicationModelProvider.Order => Order;
 
         /// <inheritdoc />
         public void OnProvidersExecuting(ApplicationModelProviderContext context)
@@ -140,8 +162,10 @@ namespace Microsoft.AspNetCore.WebHooks.ApplicationModels
 
         private void SourceData(BindingInfo bindingInfo, IWebHookBodyTypeMetadata bodyTypeMetadata)
         {
-            if (bodyTypeMetadata == null)
+            if ((bodyTypeMetadata.BodyType & WebHookBodyType.Form) != 0 &&
+                (bodyTypeMetadata.BodyType & (WebHookBodyType.Json | WebHookBodyType.Xml)) != 0)
             {
+                // Provided IWebHookBodyTypeMetadata is ambiguous. Do not add BindingInfo settings.
                 return;
             }
 
